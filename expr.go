@@ -257,11 +257,19 @@ func Compile(input string, ops ...Option) (*vm.Program, error) {
 		return nil, err
 	}
 
+	program.SetEnvFingerprint(buildEnvFingerprint(config, program.Node()))
+
 	return program, nil
 }
 
-// Run evaluates given bytecode program.
+// Run evaluates given bytecode program. Before running, it verifies that the
+// given environment is compatible with the environment fingerprint recorded
+// at compile time (see Check); incompatible environments are rejected with
+// an *EnvCompatibilityError and the program is not executed.
 func Run(program *vm.Program, env any) (any, error) {
+	if err := Check(program, env); err != nil {
+		return nil, err
+	}
 	return vm.Run(program, env)
 }
 

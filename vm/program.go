@@ -6,6 +6,7 @@ import (
 	"io"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -28,6 +29,75 @@ type Program struct {
 	functions []Function
 	debugInfo map[string]string
 	span      *Span
+
+	envFingerprint *EnvFingerprint
+}
+
+// EnvFingerprint describes the static environment a Program was compiled
+// against: static types of referenced variables, signatures of referenced
+// functions, applied patch options and the compile mode. It never contains
+// dynamic values, so it is safe to use as (part of) a cache key and to
+// verify, before running, that a Program is compatible with a given
+// environment.
+type EnvFingerprint struct {
+	// Variables maps names of referenced environment variables to their
+	// static type. An empty string means the type was unresolved (dynamic)
+	// at compile time and is therefore not statically verified.
+	Variables map[string]string
+	// VariableTypes records the reflect.Type of statically typed variables
+	// (the same names as in Variables with a non-empty type). It is used
+	// for compatibility checks which go beyond exact type identity, e.g.
+	// two distinct types implementing the same interface.
+	VariableTypes map[string]reflect.Type
+	// Functions maps names of referenced environment functions to their
+	// signature (e.g. "func(int) int").
+	Functions map[string]string
+	// Options describes applied patch visitors and compile-time functions.
+	Options []string
+	// Mode describes the compile mode (expected kind, optimizations, etc.).
+	Mode string
+}
+
+// String returns a stable, human-readable summary of the fingerprint. It is
+// suitable as a cache key in addition to the expression text.
+func (f *EnvFingerprint) String() string {
+	var buf bytes.Buffer
+	buf.WriteString("mode: ")
+	buf.WriteString(f.Mode)
+	buf.WriteString("\n")
+	variables := make([]string, 0, len(f.Variables))
+	for name, typ := range f.Variables {
+		variables = append(variables, name+":"+typ)
+	}
+	sort.Strings(variables)
+	buf.WriteString("variables: ")
+	buf.WriteString(strings.Join(variables, ","))
+	buf.WriteString("\n")
+	functions := make([]string, 0, len(f.Functions))
+	for name, sig := range f.Functions {
+		functions = append(functions, name+":"+sig)
+	}
+	sort.Strings(functions)
+	buf.WriteString("functions: ")
+	buf.WriteString(strings.Join(functions, ","))
+	buf.WriteString("\n")
+	options := append([]string(nil), f.Options...)
+	sort.Strings(options)
+	buf.WriteString("options: ")
+	buf.WriteString(strings.Join(options, ","))
+	return buf.String()
+}
+
+// SetEnvFingerprint attaches an environment fingerprint to the program. It
+// is used by expr.Compile; most users should not call it directly.
+func (program *Program) SetEnvFingerprint(fp *EnvFingerprint) {
+	program.envFingerprint = fp
+}
+
+// EnvFingerprint returns the environment fingerprint recorded at compile
+// time, or nil if the program was compiled without one.
+func (program *Program) EnvFingerprint() *EnvFingerprint {
+	return program.envFingerprint
 }
 
 // NewProgram returns a new Program. It's used by the compiler.

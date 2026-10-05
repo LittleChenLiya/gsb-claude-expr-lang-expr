@@ -265,6 +265,34 @@ func Run(program *vm.Program, env any) (any, error) {
 	return vm.Run(program, env)
 }
 
+// RunChecked evaluates the program against env after verifying that env is
+// compatible with the environment fingerprint recorded at compile time.
+// The compatibility check only uses reflection; host functions are never
+// invoked. The default Run is unchanged.
+//
+// The env argument is the runtime environment. The optional ops are the same
+// options passed to Compile (expr.Env, expr.Function, expr.Patch, ...); they
+// are used to recompute the environment fingerprint and must match the ones
+// recorded at compile time. If env is non-nil it takes precedence over any
+// expr.Env option passed to ops.
+func RunChecked(program *vm.Program, env any, ops ...Option) (any, error) {
+	if program == nil {
+		return nil, fmt.Errorf("program is nil")
+	}
+	config := conf.CreateNew()
+	for _, op := range ops {
+		op(config)
+	}
+	if env != nil {
+		config.WithEnv(env)
+	}
+	fp := vm.FingerprintOf(config)
+	if err := program.CheckEnv(fp); err != nil {
+		return nil, err
+	}
+	return Run(program, env)
+}
+
 // Eval parses, compiles and runs given input.
 func Eval(input string, env any) (any, error) {
 	if _, ok := env.(Option); ok {

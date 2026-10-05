@@ -28,6 +28,10 @@ type Program struct {
 	functions []Function
 	debugInfo map[string]string
 	span      *Span
+
+	// fingerprint is the explicit environment fingerprint recorded at compile
+	// time. It is nil for programs compiled without a configuration.
+	fingerprint *EnvFingerprint
 }
 
 // NewProgram returns a new Program. It's used by the compiler.
@@ -55,6 +59,27 @@ func NewProgram(
 		debugInfo: debugInfo,
 		span:      span,
 	}
+}
+
+// EnvFingerprint returns the environment fingerprint recorded at compile time.
+// It returns nil for programs compiled without a configuration.
+func (program *Program) EnvFingerprint() *EnvFingerprint {
+	return program.fingerprint
+}
+
+// SetEnvFingerprint sets the environment fingerprint. It is used by the
+// compiler and should not be called by hand-written programs.
+func (program *Program) SetEnvFingerprint(fp *EnvFingerprint) {
+	program.fingerprint = fp
+}
+
+// CheckEnv verifies that the given environment fingerprint is compatible with
+// the one recorded at compile time. It uses reflection only; no host functions
+// are invoked. An error is returned when a static variable changed its type,
+// a function changed its signature, a patch option changed, the compilation
+// mode changed, or a variable has an unresolved dynamic type.
+func (program *Program) CheckEnv(fp *EnvFingerprint) error {
+	return program.fingerprint.Check(fp)
 }
 
 // Source returns origin file.Source.

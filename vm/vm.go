@@ -3,6 +3,7 @@ package vm
 //go:generate sh -c "go run ./func_types > ./func_types[generated].go"
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -26,6 +27,40 @@ func Run(program *Program, env any) (any, error) {
 	vm := VM{}
 	return vm.Run(program, env)
 }
+
+// RunWithContext is like Run, but the execution is cancelled as soon as the
+// given context is done. The cancellation is observed only at controlled
+// instruction boundaries: the VM never enters the next host call (nor the
+// next iteration of filter, map, or nested loops) once the context is
+// cancelled. An already started, non-cooperative host function is not
+// interrupted forcibly; the cancellation takes effect before the next
+// instruction.
+func RunWithContext(ctx context.Context, program *Program, env any) (any, error) {
+	if program == nil {
+		return nil, fmt.Errorf("program is nil")
+	}
+	vm := VM{}
+	return vm.RunWithContext(ctx, program, env)
+}
+
+// CancelledError is returned (wrapped in *file.Error) when a context passed
+// to RunWithContext is cancelled during execution. It carries the
+// instruction pointer at which the cancellation was observed and the source
+// location of that instruction (taken from the compile-time location
+// mapping). Use errors.Is(err, context.Canceled) (or context.DeadlineExceeded)
+// to detect the cancellation cause.
+type CancelledError struct {
+	IP       int           // Instruction pointer at which the cancellation was observed.
+	Location file.Location // Source location mapped to the instruction.
+	Err      error         // The context error (context.Canceled or context.DeadlineExceeded).
+}
+
+func (e *CancelledError) Error() string {
+	return fmt.Sprintf("execution cancelled at instruction %d (offset %d): %v",
+		e.IP, e.Location.From, e.Err)
+}
+
+func (e *CancelledError) Unwrap() error { return e.Err }
 
 func Debug() *VM {
 	vm := &VM{
@@ -51,7 +86,26 @@ type VM struct {
 	currScope    *Scope  // Cached pointer to the current scope (optimization)
 }
 
-func (vm *VM) Run(program *Program, env any) (_ any, err error) {
+func (vm *VM) Run(program *Program, env any) (any, error) {
+	return vm.run(program, env, nil)
+}
+
+// RunWithContext is like Run, but the execution is cancelled as soon as the
+// given context is done. The cancellation is checked at controlled
+// instruction boundaries only, so the VM never starts the next host call
+// (nor the next iteration of filter, map, or nested loops) after the context
+// is cancelled; an already running host function is not interrupted. The VM
+// is fully reset on every run, so the same VM can be reused after a
+// cancellation without observing the old cancellation signal. A nil context
+// behaves exactly like Run.
+func (vm *VM) RunWithContext(ctx context.Context, program *Program, env any) (any, error) {
+	if ctx == nil {
+		return vm.Run(program, env)
+	}
+	return vm.run(program, env, ctx)
+}
+
+func (vm *VM) run(program *Program, env any, ctx context.Context) (_ any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			var location file.Location
@@ -93,6 +147,29 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	var fnArgsBuf []any
 
 	for vm.ip < len(program.Bytecode) {
+		if ctx != nil {
+			// Cancellation is observed only at controlled instruction
+			// boundaries: before the next instruction (and thus before the
+			// next host call or loop iteration) is executed.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				var location file.Location
+				if vm.ip < len(program.locations) {
+					location = program.locations[vm.ip]
+				}
+				cancelled := &CancelledError{
+					IP:       vm.ip,
+					Location: location,
+					Err:      ctxErr,
+				}
+				f := &file.Error{
+					Location: location,
+					Message:  cancelled.Error(),
+				}
+				f.Wrap(cancelled)
+				return nil, f.Bind(program.source)
+			}
+		}
+
 		if debug && vm.debug {
 			<-vm.step
 		}

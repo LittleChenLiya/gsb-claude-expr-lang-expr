@@ -3029,3 +3029,35 @@ func TestBytesLiteral_errors(t *testing.T) {
 		})
 	}
 }
+
+func ExampleRunWithContext() {
+	// A five-item list: only the first two host calls run before the context is canceled.
+	var cancel context.CancelFunc
+	calls := 0
+	env := map[string]any{
+		"host": func() int {
+			calls++
+			if calls == 2 {
+				cancel()
+			}
+			return calls
+		},
+	}
+
+	program, err := expr.Compile(`map(1..5, { host() })`, expr.Env(env))
+	if err != nil {
+		fmt.Printf("err: %v", err)
+		return
+	}
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	_, err = expr.RunWithContext(ctx, program, env)
+	fmt.Printf("calls: %d\n", calls)
+	fmt.Printf("err: %v\n", err)
+
+	// Output: calls: 2
+	// err: context canceled at OpIncrementIndex (1:1)
+	//  | map(1..5, { host() })
+	//  | ^
+}

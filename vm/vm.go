@@ -3,6 +3,7 @@ package vm
 //go:generate sh -c "go run ./func_types > ./func_types[generated].go"
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -27,6 +28,16 @@ func Run(program *Program, env any) (any, error) {
 	return vm.Run(program, env)
 }
 
+// RunWithContext evaluates the given bytecode program, observing ctx for cancellation.
+// See VM.RunWithContext for details.
+func RunWithContext(ctx context.Context, program *Program, env any) (any, error) {
+	if program == nil {
+		return nil, fmt.Errorf("program is nil")
+	}
+	vm := VM{}
+	return vm.RunWithContext(ctx, program, env)
+}
+
 func Debug() *VM {
 	vm := &VM{
 		debug: true,
@@ -43,6 +54,7 @@ type VM struct {
 	MemoryBudget uint
 	ip           int
 	memory       uint
+	ctx          context.Context
 	debug        bool
 	step         chan struct{}
 	curr         chan int
@@ -51,10 +63,45 @@ type VM struct {
 	currScope    *Scope  // Cached pointer to the current scope (optimization)
 }
 
-func (vm *VM) Run(program *Program, env any) (_ any, err error) {
+func (vm *VM) Run(program *Program, env any) (any, error) {
+	return vm.RunWithContext(nil, program, env)
+}
+
+// RunWithContext evaluates the given bytecode program, observing ctx for cancellation.
+//
+// Cancellation is checked at controlled instruction boundaries (between opcodes). When
+// the context is canceled, the VM stops before entering the next host call; a host call
+// that has already started is not interrupted and runs to completion. The returned error
+// is a *ContextCanceledError carrying the opcode at which cancellation was detected and
+// the source position derived from the compile-time location mapping.
+//
+// All iteration constructs (filter, map, nested loops, etc.) share the same cancellation
+// signal: canceling the context stops every active loop. After RunWithContext returns
+// (normally or via cancellation), the VM state is reset and the VM can be reused for
+// subsequent runs without any stale cancellation signal.
+func (vm *VM) RunWithContext(ctx context.Context, program *Program, env any) (_ any, err error) {
+	vm.ctx = ctx
 	defer func() {
+		vm.ctx = nil
 		if r := recover(); r != nil {
 			var location file.Location
+			var op Opcode
+			if ce, ok := r.(*contextCanceled); ok {
+				op = ce.op
+				// Cancellation is detected at the instruction boundary, before the
+				// instruction at vm.ip is executed, so the location is vm.ip (not vm.ip-1
+				// as for panics raised by an already-executed instruction).
+				if vm.ip < len(program.locations) {
+					location = program.locations[vm.ip]
+				}
+				f := &file.Error{
+					Location: location,
+					Message:  "context canceled",
+				}
+				f.Wrap(ce.err)
+				err = &ContextCanceledError{FileError: f.Bind(program.source), Op: op}
+				return
+			}
 			if vm.ip-1 < len(program.locations) {
 				location = program.locations[vm.ip-1]
 			}
@@ -93,6 +140,11 @@ func (vm *VM) Run(program *Program, env any) (_ any, err error) {
 	var fnArgsBuf []any
 
 	for vm.ip < len(program.Bytecode) {
+		if vm.ctx != nil {
+			if err := vm.ctx.Err(); err != nil {
+				panic(&contextCanceled{op: program.Bytecode[vm.ip], err: err})
+			}
+		}
 		if debug && vm.debug {
 			<-vm.step
 		}

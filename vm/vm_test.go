@@ -1,6 +1,7 @@
 package vm_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -1558,4 +1559,186 @@ func TestVM_OpCall_InvalidNumberOfArguments_Variadic(t *testing.T) {
 	_, err = expr.Run(program, env)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid number of arguments")
+}
+
+func TestVM_ContextCanceled_BeforeThirdHostCall(t *testing.T) {
+	// Cancel the context from within the host function on the second call.
+	// The third host call must never be entered.
+	var cancel context.CancelFunc
+	callCount := 0
+	env := map[string]any{
+		"host": func() int {
+			callCount++
+			if callCount == 2 {
+				cancel()
+			}
+			return callCount
+		},
+	}
+
+	program, err := expr.Compile(`host() + host() + host() + host() + host()`, expr.Env(env))
+	require.NoError(t, err)
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	_, err = expr.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+	require.Equal(t, 2, callCount)
+	require.Contains(t, err.Error(), "context canceled")
+}
+
+func TestVM_ContextCanceled_NestedLoops(t *testing.T) {
+	// Nested iterations share the same cancellation signal. Canceling on the
+	// second host call must stop the nested loop before the third call.
+	var cancel context.CancelFunc
+	callCount := 0
+	env := map[string]any{
+		"host": func() int {
+			callCount++
+			if callCount == 2 {
+				cancel()
+			}
+			return callCount
+		},
+	}
+
+	program, err := expr.Compile(`map(1..3, { map(1..3, { host() }) })`, expr.Env(env))
+	require.NoError(t, err)
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	_, err = expr.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+	require.Equal(t, 2, callCount)
+	require.Contains(t, err.Error(), "context canceled")
+}
+
+func TestVM_ContextCanceled_ReuseVM(t *testing.T) {
+	// After a canceled run, the same VM must be reusable for a normal run
+	// without any stale cancellation signal.
+	var cancel context.CancelFunc
+	callCount := 0
+	shouldCancel := true
+	env := map[string]any{
+		"host": func() int {
+			callCount++
+			if shouldCancel && callCount == 2 {
+				cancel()
+			}
+			return 1
+		},
+	}
+
+	program, err := expr.Compile(`host() + host() + host()`, expr.Env(env))
+	require.NoError(t, err)
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	reuse := &vm.VM{}
+	_, err = reuse.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+	require.Equal(t, 2, callCount)
+
+	// Reuse the same VM with a fresh program and no context.
+	// Disable cancellation so the host function runs normally.
+	shouldCancel = false
+	callCount = 0
+	program2, err := expr.Compile(`host() + host()`, expr.Env(env))
+	require.NoError(t, err)
+	out, err := reuse.Run(program2, env)
+	require.NoError(t, err)
+	require.Equal(t, 2, callCount)
+	require.Equal(t, 2, out)
+
+	// Reuse the same VM with a fresh context (not canceled).
+	callCount = 0
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	out, err = reuse.RunWithContext(ctx2, program2, env)
+	require.NoError(t, err)
+	require.Equal(t, 2, callCount)
+	require.Equal(t, 2, out)
+}
+
+func TestVM_ContextCanceled_ErrorCarriesOpAndLocation(t *testing.T) {
+	var cancel context.CancelFunc
+	env := map[string]any{
+		"host": func() int {
+			return 1
+		},
+	}
+	_ = cancel
+
+	program, err := expr.Compile(`map(1..5, { host() })`, expr.Env(env))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the run starts
+	_, err = expr.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+
+	ce, ok := err.(*vm.ContextCanceledError)
+	require.True(t, ok, "error should be *vm.ContextCanceledError, got %T", err)
+	require.NotEqual(t, vm.OpInvalid, ce.Op)
+	require.Contains(t, err.Error(), ce.Op.String())
+	require.Contains(t, err.Error(), "context canceled")
+	// Source position comes from the compile mapping.
+	require.True(t, ce.FileError.Line > 0, "line should be set from compile mapping")
+	require.True(t, ce.FileError.Column >= 0, "column should be set from compile mapping")
+}
+
+func TestVM_ContextCanceled_NilContextUnchanged(t *testing.T) {
+	// A nil context must behave exactly like a normal run.
+	env := map[string]any{
+		"host": func() int { return 42 },
+	}
+	program, err := expr.Compile(`host()`, expr.Env(env))
+	require.NoError(t, err)
+
+	out, err := vm.RunWithContext(nil, program, env)
+	require.NoError(t, err)
+	require.Equal(t, 42, out)
+}
+
+func TestVM_ContextCanceled_AlreadyCanceled(t *testing.T) {
+	// An already-canceled context must stop before the first host call.
+	callCount := 0
+	env := map[string]any{
+		"host": func() int {
+			callCount++
+			return callCount
+		},
+	}
+	program, err := expr.Compile(`host() + host()`, expr.Env(env))
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = expr.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+	require.Equal(t, 0, callCount, "no host call should execute with a pre-canceled context")
+}
+
+func TestVM_ContextCanceled_FilterAndMap(t *testing.T) {
+	// filter and map iterations share the same cancellation signal.
+	var cancel context.CancelFunc
+	callCount := 0
+	env := map[string]any{
+		"host": func() bool {
+			callCount++
+			if callCount == 2 {
+				cancel()
+			}
+			return true
+		},
+	}
+
+	program, err := expr.Compile(`filter(1..5, { host() })`, expr.Env(env))
+	require.NoError(t, err)
+
+	var ctx context.Context
+	ctx, cancel = context.WithCancel(context.Background())
+	_, err = expr.RunWithContext(ctx, program, env)
+	require.Error(t, err)
+	require.Equal(t, 2, callCount)
 }

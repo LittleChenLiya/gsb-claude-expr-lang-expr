@@ -1,6 +1,7 @@
 package expr
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -263,6 +264,12 @@ func Compile(input string, ops ...Option) (*vm.Program, error) {
 // Run evaluates given bytecode program.
 func Run(program *vm.Program, env any) (any, error) {
 	return vm.Run(program, env)
+}
+
+// RunWithContext evaluates given bytecode program, observing ctx for cancellation.
+// See vm.RunWithContext for details.
+func RunWithContext(ctx context.Context, program *vm.Program, env any) (any, error) {
+	return vm.RunWithContext(ctx, program, env)
 }
 
 // Eval parses, compiles and runs given input.

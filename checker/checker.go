@@ -1151,6 +1151,12 @@ func (v *Checker) checkArguments(
 			if in.Kind == reflect.Ptr || in.Kind == reflect.Interface {
 				continue
 			}
+			if v.config.FunctionSignatureDiagnostics && !isVariadic {
+				return Nature{}, &file.Error{
+					Location: arg.Location(),
+					Message:  fmt.Sprintf("invalid argument %d in call to %v: expected %s, got nil", i+1, name, in.String()),
+				}
+			}
 			return Nature{}, &file.Error{
 				Location: arg.Location(),
 				Message:  fmt.Sprintf("cannot use nil as argument (type %s) to call %v", in.String(), name),
@@ -1171,6 +1177,12 @@ func (v *Checker) checkArguments(
 		}
 
 		if !assignable && !argNature.IsUnknown(&v.config.NtCache) {
+			if v.config.FunctionSignatureDiagnostics && !isVariadic {
+				return Nature{}, &file.Error{
+					Location: arg.Location(),
+					Message:  fmt.Sprintf("invalid argument %d in call to %v: expected %s, got %s", i+1, name, in.String(), argNature.String()),
+				}
+			}
 			return Nature{}, &file.Error{
 				Location: arg.Location(),
 				Message:  fmt.Sprintf("cannot use %s as argument (type %s) to call %v ", argNature.String(), in.String(), name),

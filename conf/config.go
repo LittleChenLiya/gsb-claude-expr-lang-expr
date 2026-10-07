@@ -41,6 +41,13 @@ type Config struct {
 	// When enabled, the lexer treats `if`/`else` as identifiers and the parser
 	// will not parse `if` statements.
 	DisableIfOperator bool
+	// FunctionSignatureDiagnostics enables early, precise compile-time
+	// diagnostics for calls to explicitly typed functions: a type mismatch on
+	// an argument is reported with the 1-based argument position and the
+	// expected type, located at the offending argument. The check is purely
+	// static and never invokes the function. Variadic functions keep the
+	// original diagnostics.
+	FunctionSignatureDiagnostics bool
 }
 
 // CreateNew creates new config with default values.

@@ -225,6 +225,20 @@ func MaxNodes(n uint) Option {
 	}
 }
 
+// FunctionSignatureDiagnostics enables early compile-time diagnostics for
+// calls to functions with explicitly registered parameter types (via
+// Function(..., types...) or typed functions in the environment). When an
+// argument has a wrong type, the compile error points at the offending
+// argument and reports its 1-based position together with the expected type.
+// The check is purely static: the function is never called during Compile,
+// variadic functions keep the original diagnostics, and runtime errors
+// returned by the function itself are still reported by Run, not Compile.
+func FunctionSignatureDiagnostics() Option {
+	return func(c *conf.Config) {
+		c.FunctionSignatureDiagnostics = true
+	}
+}
+
 // Compile parses and compiles given input expression to bytecode program.
 func Compile(input string, ops ...Option) (*vm.Program, error) {
 	config := conf.CreateNew()

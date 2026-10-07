@@ -30,6 +30,11 @@ type Config struct {
 	ShortCircuit bool
 	Profile      bool
 	MaxNodes     uint
+	// ReadOnly enables a read-only compilation mode. Field reads of the
+	// environment objects are allowed, but calls of member methods defined on
+	// environment objects are rejected at compile time. Functions explicitly
+	// registered via expr.Function and builtins remain available.
+	ReadOnly     bool
 	ConstFns     map[string]reflect.Value
 	Visitors     []ast.Visitor
 	Functions    FunctionsTable

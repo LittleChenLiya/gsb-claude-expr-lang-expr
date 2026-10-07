@@ -262,6 +262,12 @@ func (v *Checker) identifierNode(node *ast.IdentifierNode) Nature {
 // ident method returns type of environment variable, builtin or function.
 func (v *Checker) ident(node ast.Node, name string, strict, builtins bool) Nature {
 	if nt, ok := v.config.Env.Get(&v.config.NtCache, name); ok {
+		// In read-only mode, methods defined on the environment itself
+		// cannot be called, but fields (including func-typed fields) and
+		// explicitly registered functions/builtins remain accessible.
+		if v.config.ReadOnly && nt.Method {
+			return v.error(node, "cannot call member method %s in read-only mode", name)
+		}
 		return nt
 	}
 	if builtins {
@@ -539,6 +545,19 @@ func (v *Checker) memberNode(node *ast.MemberNode) Nature {
 	if name, ok := node.Property.(*ast.StringNode); ok {
 		if base.Nil {
 			return v.error(node, "type nil has no field %s", name.Value)
+		}
+
+		// In read-only mode, member methods of environment objects cannot
+		// be called. This applies equally to concrete (static) types and
+		// to non-any interface types, as the method is part of their
+		// method set. Field reads, including func-typed fields, fall
+		// through to the regular field resolution below. Values of
+		// unknown type have no static method set and are resolved at
+		// runtime as before.
+		if v.config.ReadOnly && node.Method {
+			if _, ok := base.MethodByName(&v.config.NtCache, name.Value); ok {
+				return v.error(node, "cannot call member method %s.%s in read-only mode", base.String(), name.Value)
+			}
 		}
 
 		// First, check methods defined on base type itself,

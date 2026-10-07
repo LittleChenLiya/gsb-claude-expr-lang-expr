@@ -134,6 +134,18 @@ func Optimize(b bool) Option {
 	}
 }
 
+// ReadOnly enables read-only mode of the compiler. In this mode expressions
+// may read fields of environment objects, but cannot call member methods
+// defined on those objects (including methods on values reached through
+// non-any interface types). Functions explicitly registered with Function and
+// builtin functions are still allowed. Violations are reported as compile
+// errors. By default (without this option) member methods can be called.
+func ReadOnly() Option {
+	return func(c *conf.Config) {
+		c.ReadOnly = true
+	}
+}
+
 // DisableShortCircuit turns short circuit off.
 func DisableShortCircuit() Option {
 	return func(c *conf.Config) {

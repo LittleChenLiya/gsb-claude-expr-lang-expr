@@ -61,11 +61,28 @@ let arr = [1, 2, 3]; int(arr[0])
 :::
 
 
+## ReadOnly
+
+For controlled environments, expressions can be compiled in read-only mode via the
+[`expr.ReadOnly()`](https://pkg.go.dev/github.com/expr-lang/expr#ReadOnly) option. In this mode, field reads and calls
+to explicitly registered functions (via `expr.Function` or env function fields) are allowed, but member method calls
+on environment objects are rejected at compile time. Statically typed values and interface-wrapped values follow the
+same rule.
+
+```go
+program, err := expr.Compile(`user.Name`, expr.Env(env), expr.ReadOnly())
+// compiles fine
+
+_, err = expr.Compile(`user.GetName()`, expr.Env(env), expr.ReadOnly())
+// compile error: method calls are not allowed in read-only mode
+```
+
+By default, method calls stay allowed.
+
 ## WithContext
 
 Although the compiled program is guaranteed to be terminated, some user defined functions may not be. For example, if a
 user defined function calls a remote service, we may want to pass a context to the function.
-
 This is possible via the [`WithContext`](https://pkg.go.dev/github.com/expr-lang/expr#WithContext) option.
 
 This option will modify function calls to include the context as the first argument (only if the function signature

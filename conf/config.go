@@ -41,6 +41,11 @@ type Config struct {
 	// When enabled, the lexer treats `if`/`else` as identifiers and the parser
 	// will not parse `if` statements.
 	DisableIfOperator bool
+	// ReadOnly forbids member method calls (e.g. foo.Bar()) on environment
+	// objects at compile time. Field reads and calls to explicitly registered
+	// functions stay allowed. Statically typed values and interface-wrapped
+	// values follow the same rule.
+	ReadOnly bool
 }
 
 // CreateNew creates new config with default values.

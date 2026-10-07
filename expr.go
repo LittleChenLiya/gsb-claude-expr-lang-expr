@@ -117,6 +117,18 @@ func DisableIfOperator() Option {
 	}
 }
 
+// ReadOnly compiles the expression in a controlled read-only mode: field
+// reads and calls to explicitly registered functions (via expr.Function or
+// env function fields) are allowed, but member method calls on environment
+// objects (e.g. foo.Bar()) are rejected at compile time. Statically typed
+// values and interface-wrapped values follow the same rule. By default,
+// method calls are allowed.
+func ReadOnly() Option {
+	return func(c *conf.Config) {
+		c.ReadOnly = true
+	}
+}
+
 // WarnOnAny tells the compiler to warn if expression return any type.
 func WarnOnAny() Option {
 	return func(c *conf.Config) {

@@ -94,6 +94,136 @@ func TestDisableIfOperator_AllowsIfFunction(t *testing.T) {
 	assert.Equal(t, 42, out)
 }
 
+// Fixtures for read-only mode tests: a struct object and an
+// interface-wrapped object, both exposing a field and a getter method.
+type readOnlyObj struct {
+	Name string
+}
+
+func (o readOnlyObj) GetName() string { return o.Name }
+
+type readOnlyGetter interface {
+	GetName() string
+}
+
+type readOnlyEnv struct {
+	Obj   readOnlyObj
+	Iface readOnlyGetter
+	Pure  func(string) string
+}
+
+func newReadOnlyEnv() readOnlyEnv {
+	return readOnlyEnv{
+		Obj:   readOnlyObj{Name: "struct"},
+		Iface: readOnlyGetter(readOnlyObj{Name: "iface"}),
+		Pure:  func(s string) string { return "pure:" + s },
+	}
+}
+
+func TestReadOnly(t *testing.T) {
+	t.Run("struct field access allowed", func(t *testing.T) {
+		program, err := expr.Compile(`Obj.Name`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+		require.NoError(t, err)
+		out, err := expr.Run(program, newReadOnlyEnv())
+		require.NoError(t, err)
+		assert.Equal(t, "struct", out)
+	})
+
+	t.Run("interface field access allowed", func(t *testing.T) {
+		program, err := expr.Compile(`Iface.Name`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+		require.NoError(t, err)
+		out, err := expr.Run(program, newReadOnlyEnv())
+		require.NoError(t, err)
+		assert.Equal(t, "iface", out)
+	})
+
+	t.Run("registered pure function allowed", func(t *testing.T) {
+		program, err := expr.Compile(`shout(Obj.Name)`,
+			expr.Env(readOnlyEnv{}),
+			expr.ReadOnly(),
+			expr.Function("shout", func(params ...any) (any, error) {
+				return strings.ToUpper(params[0].(string)), nil
+			}),
+		)
+		require.NoError(t, err)
+		out, err := expr.Run(program, newReadOnlyEnv())
+		require.NoError(t, err)
+		assert.Equal(t, "STRUCT", out)
+	})
+
+	t.Run("env function field allowed", func(t *testing.T) {
+		program, err := expr.Compile(`Pure(Iface.Name)`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+		require.NoError(t, err)
+		out, err := expr.Run(program, newReadOnlyEnv())
+		require.NoError(t, err)
+		assert.Equal(t, "pure:iface", out)
+	})
+
+	t.Run("struct method rejected at compile time", func(t *testing.T) {
+		_, err := expr.Compile(`Obj.GetName()`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "method calls are not allowed in read-only mode")
+	})
+
+	t.Run("interface method rejected at compile time", func(t *testing.T) {
+		_, err := expr.Compile(`Iface.GetName()`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "method calls are not allowed in read-only mode")
+	})
+
+	t.Run("default mode keeps method calls", func(t *testing.T) {
+		program, err := expr.Compile(`Obj.GetName() + "|" + Iface.GetName()`, expr.Env(readOnlyEnv{}))
+		require.NoError(t, err)
+		out, err := expr.Run(program, newReadOnlyEnv())
+		require.NoError(t, err)
+		assert.Equal(t, "struct|iface", out)
+	})
+}
+
+func ExampleReadOnly() {
+	env := newReadOnlyEnv()
+
+	// Field reads and env function fields compile and run fine.
+	program, err := expr.Compile(`Pure(Obj.Name)`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	out, err := expr.Run(program, env)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(out)
+
+	// Method calls on environment objects are rejected at compile time;
+	// statically typed values and interface-wrapped values follow the
+	// same rule.
+	_, err = expr.Compile(`Obj.GetName()`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+	fmt.Println(strings.Contains(err.Error(), "method calls are not allowed in read-only mode"))
+	_, err = expr.Compile(`Iface.GetName()`, expr.Env(readOnlyEnv{}), expr.ReadOnly())
+	fmt.Println(strings.Contains(err.Error(), "method calls are not allowed in read-only mode"))
+
+	// Default mode keeps method calls allowed.
+	program, err = expr.Compile(`Iface.GetName()`, expr.Env(readOnlyEnv{}))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	out, err = expr.Run(program, env)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(out)
+
+	// Output:
+	// pure:struct
+	// true
+	// true
+	// iface
+}
+
 func ExampleEnv() {
 	type Segment struct {
 		Origin string

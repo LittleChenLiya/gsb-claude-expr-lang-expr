@@ -513,6 +513,13 @@ func (v *Checker) chainNode(node *ast.ChainNode) Nature {
 }
 
 func (v *Checker) memberNode(node *ast.MemberNode) Nature {
+	// In read-only mode, member method calls (e.g. foo.Bar()) are rejected
+	// at compile time, no matter if the base is a statically typed value or
+	// an interface-wrapped value. Field access stays allowed.
+	if v.config.ReadOnly && node.Method {
+		return v.error(node, "method calls are not allowed in read-only mode")
+	}
+
 	// $env variable
 	if an, ok := node.Node.(*ast.IdentifierNode); ok && an.Value == "$env" {
 		if name, ok := node.Property.(*ast.StringNode); ok {

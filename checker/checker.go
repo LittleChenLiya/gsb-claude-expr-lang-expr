@@ -1171,6 +1171,20 @@ func (v *Checker) checkArguments(
 		}
 
 		if !assignable && !argNature.IsUnknown(&v.config.NtCache) {
+			if v.config.FunctionArgDiagnostics && !(isVariadic && i >= fnNumIn-1) {
+				// Precise diagnostics for explicitly typed function
+				// signatures: report the 1-based position of the
+				// offending argument and the expected type. The check
+				// is purely static; the function is never called.
+				// Variadic arguments keep the original message.
+				return Nature{}, &file.Error{
+					Location: arg.Location(),
+					Message: fmt.Sprintf(
+						"invalid argument %d to call %v: expected %s, got %s",
+						i+1, name, in.String(), argNature.String(),
+					),
+				}
+			}
 			return Nature{}, &file.Error{
 				Location: arg.Location(),
 				Message:  fmt.Sprintf("cannot use %s as argument (type %s) to call %v ", argNature.String(), in.String(), name),

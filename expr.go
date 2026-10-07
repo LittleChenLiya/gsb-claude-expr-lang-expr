@@ -225,6 +225,25 @@ func MaxNodes(n uint) Option {
 	}
 }
 
+// FunctionArgumentDiagnostics enables precise compile-time diagnostics for
+// arguments of functions with explicitly registered parameter types (for
+// example, functions added via expr.Function with types, or functions and
+// methods defined on the environment). When enabled, an argument type
+// mismatch is reported at compile time with the 1-based position of the
+// offending argument and the expected type, and the error location points
+// at that argument.
+//
+// The check is purely static: the function is never called during
+// compilation. Variadic arguments keep the original behavior, and errors
+// returned by the function at runtime are still reported as runtime errors,
+// not compile errors. When this option is not used, the original error
+// messages and behavior are preserved.
+func FunctionArgumentDiagnostics() Option {
+	return func(c *conf.Config) {
+		c.FunctionArgDiagnostics = true
+	}
+}
+
 // Compile parses and compiles given input expression to bytecode program.
 func Compile(input string, ops ...Option) (*vm.Program, error) {
 	config := conf.CreateNew()
